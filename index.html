@@ -1,0 +1,176 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>フランジ ボルト穴 作図ツール</title>
+<style>
+  :root { --bg:#f5f6f8; --panel:#ffffff; --line:#222; --accent:#2563eb; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", "Meiryo", sans-serif;
+    background: var(--bg); color: #1a1a1a;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .panel {
+    background: var(--panel); border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    padding: 18px 22px; margin-bottom: 18px;
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: #555; }
+  .field input {
+    width: 130px; padding: 8px 10px; font-size: 15px;
+    border: 1px solid #cbd2dc; border-radius: 8px;
+  }
+  button {
+    padding: 9px 18px; font-size: 14px; font-weight: 600;
+    border: none; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff;
+  }
+  button.secondary { background: #6b7280; }
+  button:hover { opacity: .9; }
+  canvas { background: #fff; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+  .hint { font-size: 12px; color: #777; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>フランジ ボルト穴 作図ツール</h1>
+
+  <div class="panel">
+    <div class="field">
+      <label for="outerDia">外径（直径 mm）</label>
+      <input id="outerDia" type="number" min="1" step="1" value="600">
+    </div>
+    <div class="field">
+      <label for="innerDia">内径（直径 mm）</label>
+      <input id="innerDia" type="number" min="1" step="1" value="400">
+    </div>
+    <div class="field">
+      <label for="boltCount">ボルトの数</label>
+      <input id="boltCount" type="number" min="1" max="200" step="1" value="12">
+    </div>
+    <div class="field">
+      <label for="holeSize">ボルト穴（直径 mm）</label>
+      <input id="holeSize" type="number" min="0.5" step="0.5" value="50">
+    </div>
+    <div class="field">
+      <label for="scale">縮尺（px/mm）</label>
+      <input id="scale" type="number" min="0.1" step="0.1" value="1">
+    </div>
+    <button id="drawBtn">作図する</button>
+    <button id="saveBtn" class="secondary">PNG保存</button>
+  </div>
+
+  <canvas id="cv" width="1160" height="660"></canvas>
+  <div class="hint">寸法はmm（直径）で入力します。「縮尺」は1mmを何pxで描くかの倍率です（例：縮尺2なら2倍の大きさで描画・保存）。大きすぎる場合は自動で縮小して全体を収めます。先頭の穴は真上＝12時方向です。</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// フランジの中心
+const CX = cv.width / 2;          // 中心X
+const CY = cv.height / 2;         // 中心Y
+
+function draw(boltCount, holeRadius, rOuter, rInner) {
+  const rBoltCircle = (rOuter + rInner) / 2; // ボルト穴の中心が乗る円（PCD）
+
+  // clearRect により背景は塗らない → 保存PNGは透過になる
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1.5;
+
+  // 外円
+  ctx.beginPath();
+  ctx.arc(CX, CY, rOuter, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 内円
+  ctx.beginPath();
+  ctx.arc(CX, CY, rInner, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // ボルト穴を等間隔で配置
+  if (boltCount > 0) {
+    for (let i = 0; i < boltCount; i++) {
+      // 真上(12時方向 = -90°)を起点に時計回りで等間隔
+      const angle = -Math.PI / 2 + (Math.PI * 2 * i) / boltCount;
+      const hx = CX + rBoltCircle * Math.cos(angle);
+      const hy = CY + rBoltCircle * Math.sin(angle);
+      ctx.beginPath();
+      ctx.arc(hx, hy, holeRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+function getCount() {
+  let n = parseInt(document.getElementById('boltCount').value, 10);
+  if (isNaN(n) || n < 0) n = 0;
+  if (n > 200) n = 200;
+  return n;
+}
+
+// 入力値（mm）と縮尺（px/mm）から描画用の寸法（px）を求める
+const R_OUTER_MAX = Math.min(cv.width, cv.height) / 2 - 10; // キャンバスに収まる外径半径の上限
+
+function getValue(id, min, fallback) {
+  let v = parseFloat(document.getElementById(id).value);
+  if (isNaN(v) || v < min) v = fallback;
+  return v;
+}
+
+function getDimensions() {
+  let scale = getValue('scale', 0.1, 1);          // px/mm
+  let outerMm = getValue('outerDia', 1, 300);     // 外径 mm
+  let innerMm = getValue('innerDia', 1, 200);     // 内径 mm
+  let holeMm  = getValue('holeSize', 0.5, 26);    // 穴直径 mm
+
+  // 内径は外径より小さく（最低 5mm 分内側に）
+  if (innerMm > outerMm - 5) innerMm = Math.max(1, outerMm - 5);
+
+  // mm → px に変換
+  let rOuter = (outerMm / 2) * scale;
+  let rInner = (innerMm / 2) * scale;
+  let holeRadius = (holeMm / 2) * scale;
+
+  // キャンバスからはみ出す場合は縮尺を自動で下げて全体を収める
+  if (rOuter > R_OUTER_MAX) {
+    const k = R_OUTER_MAX / rOuter;
+    rOuter *= k; rInner *= k; holeRadius *= k;
+  }
+  if (holeRadius < 0.5) holeRadius = 0.5;
+
+  return { rOuter, rInner, holeRadius };
+}
+
+function render() {
+  const { rOuter, rInner, holeRadius } = getDimensions();
+  draw(getCount(), holeRadius, rOuter, rInner);
+}
+
+document.getElementById('drawBtn').addEventListener('click', render);
+['outerDia', 'innerDia', 'boltCount', 'holeSize', 'scale'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') render();
+  });
+});
+
+document.getElementById('saveBtn').addEventListener('click', () => {
+  const n = getCount();
+  const link = document.createElement('a');
+  link.download = `ボルト穴${n}個.png`;
+  link.href = cv.toDataURL('image/png');
+  link.click();
+});
+
+// 初期表示
+render();
+</script>
+</body>
+</html>
