@@ -95,6 +95,9 @@ function draw(boltCount, holeRadius, rOuter, rInner) {
   ctx.arc(CX, CY, rInner, 0, Math.PI * 2);
   ctx.stroke();
 
+  // 内円のすぐ内側に溶接線（ビード模様）を描く
+  drawWeldLine(rInner);
+
   // ボルト穴を等間隔で配置
   if (boltCount > 0) {
     for (let i = 0; i < boltCount; i++) {
@@ -106,6 +109,32 @@ function draw(boltCount, holeRadius, rOuter, rInner) {
       ctx.arc(hx, hy, holeRadius, 0, Math.PI * 2);
       ctx.stroke();
     }
+  }
+}
+
+// 内円のすぐ内側に溶接ビード模様を描く。
+// 少し傾けた短い円弧を密に重ねて、ロープ（コイル）状の溶接線にする。
+// すべて rInner に比例させているので、内径が変わると模様も一緒に拡縮する。
+function drawWeldLine(rInner) {
+  const gap  = rInner * 0.008;         // 内円との隙間（できるだけ近づける）
+  const bead = rInner * 0.035;         // ビード1個の半径（内径に比例）
+  const rWeld = rInner - gap - bead;   // ビード中心が乗る半径
+  if (rWeld <= 0 || bead < 0.5) return;
+
+  const slant = Math.PI * 0.25;        // 各ビードの傾き（コイルらしさ）
+  // すき間なく重ねて連続したロープに見せる個数
+  const count = Math.max(16, Math.round((Math.PI * 2 * rWeld) / (bead * 0.7)));
+
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count;
+    const x = CX + rWeld * Math.cos(angle);
+    const y = CY + rWeld * Math.sin(angle);
+    // 傾けた円弧（三日月）を重ねて斜めのビード模様にする
+    ctx.beginPath();
+    ctx.arc(x, y, bead, angle + slant, angle + slant + Math.PI * 1.15);
+    ctx.stroke();
   }
 }
 
