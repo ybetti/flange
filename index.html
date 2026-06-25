@@ -27,6 +27,11 @@
     width: 130px; padding: 8px 10px; font-size: 15px;
     border: 1px solid #cbd2dc; border-radius: 8px;
   }
+  .field label.checkbox {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 15px; color: #1a1a1a; height: 38px; cursor: pointer;
+  }
+  .field label.checkbox input { width: auto; }
   button {
     padding: 9px 18px; font-size: 14px; font-weight: 600;
     border: none; border-radius: 8px; cursor: pointer;
@@ -48,7 +53,11 @@
     </div>
     <div class="field">
       <label for="innerDia">内径（直径 mm）</label>
-      <input id="innerDia" type="number" min="1" step="1" value="400">
+      <input id="innerDia" type="number" min="1" step="1" value="350">
+    </div>
+    <div class="field">
+      <label for="gasketDia">ガスケット面（直径 mm）</label>
+      <input id="gasketDia" type="number" min="1" step="1" value="490">
     </div>
     <div class="field">
       <label for="boltCount">ボルトの数</label>
@@ -56,11 +65,19 @@
     </div>
     <div class="field">
       <label for="holeSize">ボルト穴（直径 mm）</label>
-      <input id="holeSize" type="number" min="0.5" step="0.5" value="50">
+      <input id="holeSize" type="number" min="0.5" step="0.5" value="32">
     </div>
     <div class="field">
       <label for="scale">縮尺（px/mm）</label>
       <input id="scale" type="number" min="0.1" step="0.1" value="1">
+    </div>
+    <div class="field">
+      <label for="centerAngle">中心線の開始角度（°）</label>
+      <input id="centerAngle" type="number" step="1" value="0">
+    </div>
+    <div class="field">
+      <label for="weldLine">溶接線</label>
+      <label class="checkbox"><input id="weldLine" type="checkbox" checked> 表示する</label>
     </div>
     <button id="drawBtn">作図する</button>
     <button id="saveBtn" class="secondary">PNG保存</button>
@@ -77,8 +94,8 @@ const ctx = cv.getContext('2d');
 const CX = cv.width / 2;          // 中心X
 const CY = cv.height / 2;         // 中心Y
 
-function draw(boltCount, holeRadius, rOuter, rInner) {
-  const rBoltCircle = (rOuter + rInner) / 2; // ボルト穴の中心が乗る円（PCD）
+function draw(boltCount, holeRadius, rOuter, rInner, showWeld, centerAngleDeg, rGasket) {
+  const rBoltCircle = (rOuter + rGasket) / 2; // ボルト穴の中心が乗る円（外径とガスケット面の中間）
 
   // clearRect により背景は塗らない → 保存PNGは透過になる
   ctx.clearRect(0, 0, cv.width, cv.height);
@@ -86,7 +103,7 @@ function draw(boltCount, holeRadius, rOuter, rInner) {
   ctx.lineWidth = 1.5;
 
   // 中心線（90°ごとの点線）
-  drawCenterLines(rOuter);
+  drawCenterLines(rOuter, centerAngleDeg);
 
   // 外円
   ctx.beginPath();
@@ -98,8 +115,15 @@ function draw(boltCount, holeRadius, rOuter, rInner) {
   ctx.arc(CX, CY, rInner, 0, Math.PI * 2);
   ctx.stroke();
 
-  // 内円のすぐ内側に溶接線（ビード模様）を描く
-  drawWeldLine(rInner);
+  // ガスケット面（内径とボルト穴の間の一周線）
+  if (rGasket > 0) {
+    ctx.beginPath();
+    ctx.arc(CX, CY, rGasket, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 内円のすぐ内側に溶接線（ビード模様）を描く（オンのときだけ）
+  if (showWeld) drawWeldLine(rInner);
 
   // ボルト穴を等間隔で配置
   if (boltCount > 0) {
@@ -115,15 +139,17 @@ function draw(boltCount, holeRadius, rOuter, rInner) {
   }
 }
 
-// 中心から 90°ごと（上・下・左・右）に点線の中心線を引く。
-function drawCenterLines(rOuter) {
+// 中心から 90°ごとに点線の中心線を引く。
+// startDeg は開始角度（真上=12時方向を0°とし、時計回りに度数で指定）。
+function drawCenterLines(rOuter, startDeg) {
   const len = rOuter + 12;            // 外円より少し外まで伸ばす
+  const startRad = (startDeg || 0) * Math.PI / 180;
   ctx.save();
   ctx.strokeStyle = '#222';
   ctx.lineWidth = 1;
   ctx.setLineDash([8, 6]);           // 点線
   for (let i = 0; i < 4; i++) {
-    const angle = -Math.PI / 2 + (Math.PI / 2) * i; // 真上から90°ずつ
+    const angle = -Math.PI / 2 + startRad + (Math.PI / 2) * i; // 真上＋開始角度から90°ずつ
     ctx.beginPath();
     ctx.moveTo(CX, CY);
     ctx.lineTo(CX + len * Math.cos(angle), CY + len * Math.sin(angle));
@@ -178,33 +204,43 @@ function getDimensions() {
   let scale = getValue('scale', 0.1, 1);          // px/mm
   let outerMm = getValue('outerDia', 1, 300);     // 外径 mm
   let innerMm = getValue('innerDia', 1, 200);     // 内径 mm
+  let gasketMm = getValue('gasketDia', 1, 230);   // ガスケット面 直径 mm
   let holeMm  = getValue('holeSize', 0.5, 26);    // 穴直径 mm
 
   // 内径は外径より小さく（最低 5mm 分内側に）
   if (innerMm > outerMm - 5) innerMm = Math.max(1, outerMm - 5);
 
+  // ガスケット面は内径と外径の間に収める（ボルト穴は外径とガスケット面の中間に置く）
+  if (gasketMm <= innerMm) gasketMm = innerMm + 1;
+  if (gasketMm >= outerMm) gasketMm = outerMm - 1;
+
   // mm → px に変換
   let rOuter = (outerMm / 2) * scale;
   let rInner = (innerMm / 2) * scale;
+  let rGasket = (gasketMm / 2) * scale;
   let holeRadius = (holeMm / 2) * scale;
 
   // キャンバスからはみ出す場合は縮尺を自動で下げて全体を収める
   if (rOuter > R_OUTER_MAX) {
     const k = R_OUTER_MAX / rOuter;
-    rOuter *= k; rInner *= k; holeRadius *= k;
+    rOuter *= k; rInner *= k; rGasket *= k; holeRadius *= k;
   }
   if (holeRadius < 0.5) holeRadius = 0.5;
 
-  return { rOuter, rInner, holeRadius };
+  return { rOuter, rInner, rGasket, holeRadius };
 }
 
 function render() {
-  const { rOuter, rInner, holeRadius } = getDimensions();
-  draw(getCount(), holeRadius, rOuter, rInner);
+  const { rOuter, rInner, rGasket, holeRadius } = getDimensions();
+  const showWeld = document.getElementById('weldLine').checked;
+  const centerAngle = getValue('centerAngle', -3600, 0);
+  draw(getCount(), holeRadius, rOuter, rInner, showWeld, centerAngle, rGasket);
 }
 
 document.getElementById('drawBtn').addEventListener('click', render);
-['outerDia', 'innerDia', 'boltCount', 'holeSize', 'scale'].forEach(id => {
+document.getElementById('weldLine').addEventListener('change', render);
+document.getElementById('centerAngle').addEventListener('change', render);
+['outerDia', 'innerDia', 'gasketDia', 'boltCount', 'holeSize', 'scale', 'centerAngle'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') render();
   });
@@ -212,10 +248,26 @@ document.getElementById('drawBtn').addEventListener('click', render);
 
 document.getElementById('saveBtn').addEventListener('click', () => {
   const n = getCount();
+  const { rOuter, rInner, rGasket, holeRadius } = getDimensions();
+  const showWeld = document.getElementById('weldLine').checked;
+  const centerAngle = getValue('centerAngle', -3600, 0);
+
+  // 保存時はフランジ全体を -開始角度ぶん回転させ、十字（中心線）が
+  // 画像の真上・真下・左右と一致するようにする。
+  ctx.save();
+  ctx.translate(CX, CY);
+  ctx.rotate(-centerAngle * Math.PI / 180);
+  ctx.translate(-CX, -CY);
+  draw(n, holeRadius, rOuter, rInner, showWeld, centerAngle, rGasket);
+  ctx.restore();
+
   const link = document.createElement('a');
   link.download = `ボルト穴${n}個.png`;
   link.href = cv.toDataURL('image/png');
   link.click();
+
+  // 画面表示は元の角度に戻す
+  render();
 });
 
 // 初期表示
